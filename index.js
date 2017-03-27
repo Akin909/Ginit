@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 const chalk = require('chalk');
 const clear = require('clear');
 const CLI = require('clui');
@@ -54,9 +55,9 @@ function getGithubCredentials(callback) {
   inquirer.prompt(questions).then(callback);
 }
 
-getGithubCredentials( (args) => {
-  console.log(args);
-} );
+// getGithubCredentials( (args) => {
+//   console.log(args);
+// } );
 
 
 const github = new GithubApi({
@@ -158,5 +159,89 @@ function getGithubToken(callback) {
   }
 
   function createGitignore(callback) {
-    const filelist = _.without(fs.readdirSync)
+    const filelist = _.without(fs.readdirSync('.'),'.git','.gitignore');
+
+    if (filelist.length) {
+      inquirer.prompt(
+        [
+          {
+            type:'checkbox',
+            name:'ignore',
+            message: 'Select the files and/or folders you wish to ignore:',
+            choices: filelist,
+            default:['node_modules','bower_components']
+          }
+        ]
+      ).then((answers) => {
+        if (answers.ignore.length) {
+          fs.writeFileSync('.gitignore',answers.ignore.join('\n'));
+        } else {
+          touch('.gitignore');
+        }
+        return callback();
+      });
+    } else {
+      touch('.gitignore');
+      return callback();
+    }
   }
+
+  function setupRepo(url, callback) {
+    const status = new Spinner('Setting up the repository...');
+    status.start();
+
+    git
+    .init()
+    .add('.gitignore')
+    .add('./*')
+    .commit('Initial commit')
+    .addRemote('origin',url)
+    .push('origin','master')
+    .then( () => {
+      status.stop();
+      return callback();
+    });
+  }
+
+  function githubAuth(callback) {
+    getGithubToken( (err,token) => {
+     if (err) {
+       return callback(err);
+     } 
+     github.authenticate({
+       type:'oauth',
+       token:token
+     });
+     return callback(null,token);
+    });
+  }
+
+  githubAuth( (err,authed) => {
+    if (err) {
+      switch (err.code) {
+        case 401:
+          console.log(chalk.red('Couldn\'t log you in. Please try again.'));
+        break;
+        case 422:
+          console.log(chalk.red('You already have an access token'));
+        break;
+      }
+    }
+    if (authed) {
+      console.log(chalk.green('Successfully authenticated!'));
+      createRepo( (err,url) => {
+        if (err) {
+        console.log('An error has occured');
+        }
+        if (url) {
+          createGitignore( () => {
+            setupRepo(url, (err) => {
+              if (!err) {
+                console.log(chalk.green('All done!'));
+              }
+            });
+          });
+        }
+      });
+    }
+  });
